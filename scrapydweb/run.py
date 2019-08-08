@@ -11,7 +11,7 @@ from flask import request
 from scrapydweb import create_app
 from scrapydweb.__version__ import __description__, __version__
 from scrapydweb.common import authenticate, find_scrapydweb_settings_py, handle_metadata, handle_slash
-from scrapydweb.vars import SCHEDULER_STATE_DICT, STATE_PAUSED, STATE_RUNNING
+from scrapydweb.vars import ROOT_DIR, SCRAPYDWEB_SETTINGS_PY, SCHEDULER_STATE_DICT, STATE_PAUSED, STATE_RUNNING
 from scrapydweb.utils.check_app_config import check_app_config
 
 
@@ -19,9 +19,7 @@ logger = logging.getLogger(__name__)
 apscheduler_logger = logging.getLogger('apscheduler')
 
 STAR = '\n%s\n' % ('*' * 100)
-CWD = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_SETTINGS_PY_PATH = os.path.join(CWD, 'default_settings.py')
-SCRAPYDWEB_SETTINGS_PY = 'scrapydweb_settings_v8.py'
+DEFAULT_SETTINGS_PY_PATH = os.path.join(ROOT_DIR, 'default_settings.py')
 
 
 def main():
@@ -135,7 +133,9 @@ def load_custom_settings(config):
                      "Then add your SCRAPYD_SERVERS in the config file and restart scrapydweb.\n".format(
                       file=SCRAPYDWEB_SETTINGS_PY))
         else:
-            sys.exit("\nThe config file '{file}' has been copied to current working directory.\n"
+            sys.exit("\nATTENTION:\nYou may encounter ERROR if there are any timer tasks added in v1.2.0,\n"
+                     "and you have to restart scrapydweb and manually restart the stopped tasks.\n"
+                     "\nThe config file '{file}' has been copied to current working directory.\n"
                      "Please add your SCRAPYD_SERVERS in the config file and restart scrapydweb.\n".format(
                       file=SCRAPYDWEB_SETTINGS_PY))
 
@@ -173,7 +173,7 @@ def parse_args(config):
         help="current: ENABLE_AUTH = %s, append '--disable_auth' to disable basic auth for web UI" % ENABLE_AUTH
     )
 
-    ENABLE_LOGPARSER = config.get('ENABLE_LOGPARSER', True)
+    ENABLE_LOGPARSER = config.get('ENABLE_LOGPARSER', False)
     parser.add_argument(
         '-dlp', '--disable_logparser',
         action='store_true',

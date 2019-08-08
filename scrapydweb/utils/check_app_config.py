@@ -5,16 +5,19 @@ import os
 import re
 
 from ..common import handle_metadata, handle_slash, json_dumps, session
+from ..models import create_jobs_table, db
 from ..utils.scheduler import scheduler
+from ..utils.setup_database import test_database_url_pattern
 from ..vars import (ALLOWED_SCRAPYD_LOG_EXTENSIONS, EMAIL_TRIGGER_KEYS,
-                    SCHEDULER_STATE_DICT, STATE_PAUSED, STATE_RUNNING)
+                    SCHEDULER_STATE_DICT, STATE_PAUSED, STATE_RUNNING,
+                    SCHEDULE_ADDITIONAL, STRICT_NAME_PATTERN, UA_DICT,
+                    jobs_table_map)
 from .send_email import send_email
 from .sub_process import init_logparser, init_poll
 
 
 logger = logging.getLogger(__name__)
 
-jobs_table_dict = {}
 REPLACE_URL_NODE_PATTERN = re.compile(r'(:\d+/)\d+/')
 EMAIL_PATTERN = re.compile(r'^[^@]+@[^@]+\.[^@]+$')
 HASH = '#' * 100
@@ -42,7 +45,7 @@ def check_app_config(config):
         else:
             should_be = "an instance of %s%s" % (is_instance, ' and not empty' if non_empty else '')
 
-        value = config.get(key, default)
+        value = config.setdefault(key, default)
         kws = dict(
             key=key,
             should_be=should_be,
@@ -61,7 +64,7 @@ def check_app_config(config):
 
     # ScrapydWeb
     check_assert('SCRAPYDWEB_BIND', '0.0.0.0', str, non_empty=True)
-    SCRAPYDWEB_PORT = config.get('SCRAPYDWEB_PORT', 5000)
+    SCRAPYDWEB_PORT = config.setdefault('SCRAPYDWEB_PORT', 5000)
     try:
         assert not isinstance(SCRAPYDWEB_PORT, bool)
         SCRAPYDWEB_PORT = int(SCRAPYDWEB_PORT)
@@ -102,13 +105,20 @@ def check_app_config(config):
 
     # Scrapyd
     check_scrapyd_servers(config)
+    # For JobsView
+    for node, scrapyd_server in enumerate(config['SCRAPYD_SERVERS'], 1):
+        # Note that check_app_config() is executed multiple times in test
+        if node not in jobs_table_map:
+            jobs_table_map[node] = create_jobs_table(re.sub(STRICT_NAME_PATTERN, '_', scrapyd_server))
+    db.create_all(bind='jobs')
+    logger.debug("Created %s tables for JobsView", len(jobs_table_map))
 
-    check_assert('SCRAPYD_LOGS_DIR', '', str)
+    check_assert('LOCAL_SCRAPYD_LOGS_DIR', '', str)
     check_assert('LOCAL_SCRAPYD_SERVER', '', str)
-    SCRAPYD_LOGS_DIR = config.get('SCRAPYD_LOGS_DIR', '')
-    if SCRAPYD_LOGS_DIR:
-        assert os.path.isdir(SCRAPYD_LOGS_DIR), "SCRAPYD_LOGS_DIR not found: %s" % SCRAPYD_LOGS_DIR
-        logger.info("Setting up SCRAPYD_LOGS_DIR: %s", handle_slash(SCRAPYD_LOGS_DIR))
+    LOCAL_SCRAPYD_LOGS_DIR = config.get('LOCAL_SCRAPYD_LOGS_DIR', '')
+    if LOCAL_SCRAPYD_LOGS_DIR:
+        assert os.path.isdir(LOCAL_SCRAPYD_LOGS_DIR), "LOCAL_SCRAPYD_LOGS_DIR not found: %s" % LOCAL_SCRAPYD_LOGS_DIR
+        logger.info("Setting up LOCAL_SCRAPYD_LOGS_DIR: %s", handle_slash(LOCAL_SCRAPYD_LOGS_DIR))
         LOCAL_SCRAPYD_SERVER = config.get('LOCAL_SCRAPYD_SERVER', '')
         if LOCAL_SCRAPYD_SERVER and not re.search(r':\d+$', LOCAL_SCRAPYD_SERVER):
             LOCAL_SCRAPYD_SERVER += ':6800'
@@ -116,7 +126,7 @@ def check_app_config(config):
         if len(config['SCRAPYD_SERVERS']) > 1:
             assert LOCAL_SCRAPYD_SERVER, \
                 ("The LOCAL_SCRAPYD_SERVER option must be set up since you have added multiple Scrapyd servers "
-                 "and set up the SCRAPYD_LOGS_DIR option.\nOtherwise, just set SCRAPYD_LOGS_DIR to ''")
+                 "and set up the LOCAL_SCRAPYD_LOGS_DIR option.\nOtherwise, just set LOCAL_SCRAPYD_LOGS_DIR to ''")
         else:
             if not LOCAL_SCRAPYD_SERVER:
                 config['LOCAL_SCRAPYD_SERVER'] = config['SCRAPYD_SERVERS'][0]
@@ -128,8 +138,8 @@ def check_app_config(config):
     # else:
     #     _path = os.path.join(os.path.expanduser('~'), 'logs')
     #     if os.path.isdir(_path):
-    #         config['SCRAPYD_LOGS_DIR'] = _path
-    #         logger.info("Found SCRAPYD_LOGS_DIR: %s", config['SCRAPYD_LOGS_DIR'])
+    #         config['LOCAL_SCRAPYD_LOGS_DIR'] = _path
+    #         logger.info("Found LOCAL_SCRAPYD_LOGS_DIR: %s", config['LOCAL_SCRAPYD_LOGS_DIR'])
 
     check_assert('SCRAPYD_LOG_EXTENSIONS', ALLOWED_SCRAPYD_LOG_EXTENSIONS, list, non_empty=True, containing_type=str)
     SCRAPYD_LOG_EXTENSIONS = config.get('SCRAPYD_LOG_EXTENSIONS', ALLOWED_SCRAPYD_LOG_EXTENSIONS)
@@ -139,14 +149,39 @@ def check_app_config(config):
     logger.info("Locating scrapy logfiles with SCRAPYD_LOG_EXTENSIONS: %s", SCRAPYD_LOG_EXTENSIONS)
 
     # LogParser
-    check_assert('ENABLE_LOGPARSER', True, bool)
-    if config.get('ENABLE_LOGPARSER', True):
-        assert config.get('SCRAPYD_LOGS_DIR', ''), \
-            ("In order to automatically run LogParser at startup, you have to set up the SCRAPYD_LOGS_DIR option "
+    check_assert('ENABLE_LOGPARSER', False, bool)
+    if config.get('ENABLE_LOGPARSER', False):
+        assert config.get('LOCAL_SCRAPYD_LOGS_DIR', ''), \
+            ("In order to automatically run LogParser at startup, you have to set up the LOCAL_SCRAPYD_LOGS_DIR option "
              "first.\nOtherwise, set 'ENABLE_LOGPARSER = False' if you are not running any Scrapyd service "
              "on the current ScrapydWeb host.\nNote that you can run the LogParser service separately "
              "via command 'logparser' as you like. ")
     check_assert('BACKUP_STATS_JSON_FILE', True, bool)
+
+    # Run Spider
+    check_assert('SCHEDULE_EXPAND_SETTINGS_ARGUMENTS', False, bool)
+    check_assert('SCHEDULE_CUSTOM_USER_AGENT', '', str)
+    config['SCHEDULE_CUSTOM_USER_AGENT'] = config['SCHEDULE_CUSTOM_USER_AGENT'] or 'Mozilla/5.0'
+    UA_DICT.update(custom=config['SCHEDULE_CUSTOM_USER_AGENT'])
+    if config.get('SCHEDULE_USER_AGENT', None) is not None:
+        check_assert('SCHEDULE_USER_AGENT', '', str)
+        user_agent = config['SCHEDULE_USER_AGENT']
+        assert user_agent in UA_DICT.keys(), \
+            "SCHEDULE_USER_AGENT should be any value of %s. Current value: %s" % (UA_DICT.keys(), user_agent)
+    if config.get('SCHEDULE_ROBOTSTXT_OBEY', None) is not None:
+        check_assert('SCHEDULE_ROBOTSTXT_OBEY', False, bool)
+    if config.get('SCHEDULE_COOKIES_ENABLED', None) is not None:
+        check_assert('SCHEDULE_COOKIES_ENABLED', False, bool)
+    if config.get('SCHEDULE_CONCURRENT_REQUESTS', None) is not None:
+        check_assert('SCHEDULE_CONCURRENT_REQUESTS', 16, int, allow_zero=False)
+    if config.get('SCHEDULE_DOWNLOAD_DELAY', None) is not None:
+        download_delay = config['SCHEDULE_DOWNLOAD_DELAY']
+        if isinstance(download_delay, float):
+            assert download_delay >= 0.0, \
+                "SCHEDULE_DOWNLOAD_DELAY should a non-negative number. Current value: %s" % download_delay
+        else:
+            check_assert('SCHEDULE_DOWNLOAD_DELAY', 0, int)
+    check_assert('SCHEDULE_ADDITIONAL', SCHEDULE_ADDITIONAL, str)
 
     # Page Display
     check_assert('SHOW_SCRAPYD_ITEMS', True, bool)
@@ -215,6 +250,11 @@ def check_app_config(config):
         # logging.getLogger('apscheduler').setLevel(logging.DEBUG)
     # else:
         # logging.getLogger('apscheduler').setLevel(logging.WARNING)
+    check_assert('DATA_PATH', '', str)
+    check_assert('DATABASE_URL', '', str)
+    database_url = config.get('DATABASE_URL', '')
+    if database_url:
+        assert any(test_database_url_pattern(database_url)), "Invalid format of DATABASE_URL: %s" % database_url
 
     # Apscheduler
     # In __init__.py create_app(): scheduler.start(paused=True)
@@ -293,9 +333,11 @@ def check_scrapyd_connectivity(servers):
     def check_connectivity(server):
         (_group, _ip, _port, _auth) = server
         try:
-            r = session.get('http://%s:%s' % (_ip, _port), auth=_auth, timeout=3)
-            assert r.status_code == 200
-        except:
+            url = 'http://%s:%s' % (_ip, _port)
+            r = session.get(url, auth=_auth, timeout=10)
+            assert r.status_code == 200, "%s got status_code %s" % (url, r.status_code)
+        except Exception as err:
+            logger.error(err)
             return False
         else:
             return True
@@ -335,7 +377,7 @@ def check_email(config):
 
     logger.debug("Trying to send email (smtp_connection_timeout=%s)...", config.get('SMTP_CONNECTION_TIMEOUT', 10))
     result = send_email(**kwargs)
-    if not result:
+    if not result and os.environ.get('TEST_ON_CIRCLECI', 'False') == 'False':
         logger.debug("kwargs for send_email():\n%s", json_dumps(kwargs, sort_keys=False))
     assert result, "Fail to send email. Modify the email settings above or pass in the argument '--disable_email'"
 
@@ -343,13 +385,13 @@ def check_email(config):
 
 
 def init_subprocess(config):
-    if config.get('ENABLE_LOGPARSER', True):
+    if config.get('ENABLE_LOGPARSER', False):
         config['LOGPARSER_PID'] = init_logparser(config)
     else:
         config['LOGPARSER_PID'] = None
     handle_metadata('logparser_pid', config['LOGPARSER_PID'])
 
-    if config.get('ENABLE_EMAIL', True):
+    if config.get('ENABLE_EMAIL', False):
         config['POLL_PID'] = init_poll(config)
     else:
         config['POLL_PID'] = None

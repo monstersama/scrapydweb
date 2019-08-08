@@ -2,13 +2,13 @@
 import re
 import time
 
-from ..myview import MyView
+from .baseview import BaseView
 
 
 API_MAP = dict(start='schedule', stop='cancel', forcestop='cancel', liststats='logs/stats')
 
 
-class ApiView(MyView):
+class ApiView(BaseView):
 
     def __init__(self):
         super(ApiView, self).__init__()
@@ -27,7 +27,7 @@ class ApiView(MyView):
         self.update_data()
         self.get_result()
         self.handle_result()
-        return self.json_dumps(self.js, sort_keys=False)
+        return self.json_dumps(self.js, sort_keys=False, as_response=True)
 
     def update_url(self):
         if self.opt in ['listversions', 'listjobs']:
@@ -89,10 +89,10 @@ class ApiView(MyView):
         elif self.opt == 'liststats':
             if self.js.get('logparser_version') != self.LOGPARSER_VERSION:
                 if self.project and self.version_spider_job:  # 'List Stats' in the Servers page
-                    tip = "'pip install -U logparser' to update LogParser to v%s" % self.LOGPARSER_VERSION
+                    tip = "'pip install --upgrade logparser' to update LogParser to v%s" % self.LOGPARSER_VERSION
                     self.js = dict(status=self.OK, tip=tip)
                 else:  # XMLHttpRequest in the Jobs page; POST in jobs.py
-                    self.js['tip'] = ("'pip install -U logparser' on host '%s' and run command 'logparser' "
+                    self.js['tip'] = ("'pip install --upgrade logparser' on host '%s' and run command 'logparser' "
                                       "to update LogParser to v%s") % (self.SCRAPYD_SERVER, self.LOGPARSER_VERSION)
                     self.js['status'] = self.ERROR
             elif self.project and self.version_spider_job:  # 'List Stats' in the Servers page

@@ -13,7 +13,9 @@ from tests.utils import cst, req, sleep, upload_file_deploy
 
 
 def test_log_utf8_stats(app, client):
-    upload_file_deploy(app, client, filename='ScrapydWeb_demo.egg', project=cst.PROJECT, redirect_project=cst.PROJECT)
+    # In ScrapydWeb_demo.egg: CONCURRENT_REQUESTS=1, DOWNLOAD_DELAY=10
+    upload_file_deploy(app, client, filename='ScrapydWeb_demo.egg',
+                       project=cst.PROJECT, redirect_project=cst.PROJECT)
 
     with app.test_request_context():
         kws = dict(node=1, opt='start', project=cst.PROJECT, version_spider_job=cst.SPIDER)
@@ -29,7 +31,7 @@ def test_log_utf8_stats(app, client):
             ins='log - ScrapydWeb')
 
         # For testing request_scrapy_log() of LogView in log.py
-        app.config['SCRAPYD_LOGS_DIR'] = 'dir-not-exist'
+        app.config['LOCAL_SCRAPYD_LOGS_DIR'] = 'non-exist-dir'
         req(app, client, view='log', kws=dict(node=1, opt='utf8', project=cst.PROJECT, spider=cst.SPIDER, job=jobid),
             ins='log - ScrapydWeb')
 
@@ -180,7 +182,7 @@ def test_parse_upload(app, client):
         location='/parse/uploaded/')
 
     req(app, client, view='parse.upload', kws=dict(node=1),
-        data={'file': (os.path.join(cst.CWD, 'data/%s' % cst.DEMO_LOG), cst.DEMO_LOG)},
+        data={'file': (os.path.join(cst.ROOT_DIR, 'data/%s' % cst.DEMO_LOG), cst.DEMO_LOG)},
         location='/parse/uploaded/')
 
 
@@ -249,6 +251,10 @@ def test_poll_py(app):
 
 
 def test_email(app, client):
+    # In ScrapydWeb_demo_no_delay.egg: unset CONCURRENT_REQUESTS, unset DOWNLOAD_DELAY
+    upload_file_deploy(app, client, filename='ScrapydWeb_demo_no_delay.egg',
+                       project=cst.PROJECT, redirect_project=cst.PROJECT)
+
     # with app.test_request_context():
     if not app.config.get('ENABLE_EMAIL', False):
         return

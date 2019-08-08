@@ -3,7 +3,7 @@ import os
 
 from scrapydweb import create_app
 from scrapydweb.common import find_scrapydweb_settings_py
-from scrapydweb.run import SCRAPYDWEB_SETTINGS_PY
+from scrapydweb.vars import SCRAPYDWEB_SETTINGS_PY
 from scrapydweb.utils.check_app_config import check_app_config, check_email
 from tests.utils import get_text, req
 from tests.test_z_cleantest import test_cleantest as cleantest
@@ -40,7 +40,11 @@ def test_check_app_config(app, client):
 
     # In conftest.py: ENABLE_LOGPARSER=False
     assert not os.path.exists(app.config['STATS_JSON_PATH'])
+
+    # ['username:password@127.0.0.1:6800', ]
+    app.config['SCRAPYD_SERVERS'] = app.config['_SCRAPYD_SERVERS']
     check_app_config(app.config)
+
     strings = []
 
     assert app.config['LOGPARSER_PID'] is None
@@ -59,7 +63,11 @@ def test_check_app_config(app, client):
     # Test ENABLE_EMAIL = False
     if app.config.get('ENABLE_EMAIL', False):
         app.config['ENABLE_EMAIL'] = False
+
+        # ['username:password@127.0.0.1:6800', ]
+        app.config['SCRAPYD_SERVERS'] = app.config['_SCRAPYD_SERVERS']
         check_app_config(app.config)
+
         assert app.config['LOGPARSER_PID'] is None
         assert app.config['POLL_PID'] is None
         req(app, client, view='settings', kws=dict(node=1), ins='poll_pid: None')
@@ -67,12 +75,15 @@ def test_check_app_config(app, client):
     # Test ENABLE_LOGPARSER = True, see test_enable_logparser()
 
 
-def test_check_email_with_fake_password(app):
+def test_check_email_with_fake_account(app):
     with app.test_request_context():
         if not app.config.get('ENABLE_EMAIL', False):
             return
 
-        app.config['EMAIL_PASSWORD'] = 'fakepassword'
+        app.config['EMAIL_USERNAME'] = 'username@qq.com'
+        app.config['EMAIL_PASSWORD'] = 'password'
+        app.config['FROM_ADDR'] = 'username@qq.com'
+        app.config['TO_ADDRS'] = ['username@qq.com']
         try:
             check_email(app.config)
         except AssertionError:

@@ -9,10 +9,10 @@ from flask import current_app as app
 from flask import Response
 import requests
 from requests.adapters import HTTPAdapter
-from requests.auth import _basic_auth_str
+from w3lib.http import basic_auth_header
 
 from .__version__ import __version__
-from .database import Metadata, db
+from .models import Metadata, db
 
 
 session = requests.Session()
@@ -23,7 +23,7 @@ session.mount('https://', HTTPAdapter(pool_connections=1000, pool_maxsize=1000))
 # http://flask.pocoo.org/snippets/category/authentication/
 def authenticate():
     """Sends a 401 response that enables basic auth"""
-    return Response("<script>alert('FAIL to login: basic auth for ScrapydWeb has been enabled');</script>",
+    return Response("<script>alert('Fail to login: basic auth for ScrapydWeb has been enabled');</script>",
                     401, {'WWW-Authenticate': 'Basic realm="ScrapydWeb Basic Auth Required"'})
 
 
@@ -34,7 +34,8 @@ def find_scrapydweb_settings_py(filename, path, prevpath=None):
     cfgfile = os.path.join(path, filename)
     if os.path.exists(cfgfile):
         return cfgfile
-    return find_scrapydweb_settings_py(filename, os.path.dirname(path), path)
+    # In vars.py, try to import module scrapydweb_settings_vN in cwd only
+    # return find_scrapydweb_settings_py(filename, os.path.dirname(path), path)
 
 
 def get_now_string(allow_space=False):
@@ -50,7 +51,7 @@ def get_response_from_view(url, auth=None, data=None, as_json=False):
     # python - Flask test_client() doesn't have request.authorization with pytest
     client = app.test_client()
     if auth is not None:
-        headers = {'Authorization': _basic_auth_str(*auth)}
+        headers = {'Authorization': basic_auth_header(*auth)}
     else:
         headers = {}
     if data is not None:
